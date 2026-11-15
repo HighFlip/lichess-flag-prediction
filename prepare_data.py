@@ -50,6 +50,7 @@ def snapshots(game):
     board = game.board()
     clocks = {chess.WHITE: base, chess.BLACK: base}
     crossed = {chess.WHITE: set(), chess.BLACK: set()} # thresholds already recorded per player
+    berserk = {chess.WHITE: False, chess.BLACK: False} # berserk (arena only) halves the starting clock
     for ply, node in enumerate(game.mainline(), start=1):
         player = board.turn # who is making this move
         board.push(node.move)
@@ -57,6 +58,8 @@ def snapshots(game):
         if clock is None:
             return []
         clocks[player] = clock
+        if ply <= 2: # each player's first move shows their starting clock
+            berserk[player] = clock < base * 0.75
 
         for threshold in THRESHOLDS:
             if clock >= threshold or threshold in crossed[player]:
@@ -68,10 +71,10 @@ def snapshots(game):
             rows.append({
                 "game_id": game.headers["Site"].rsplit("/", 1)[-1],
                 "threshold": threshold,
-                "Event": game.headers["Event"],
-                "ECO": game.headers["ECO"],
-                "Opening": game.headers["Opening"],
-                "TimeControl": base,
+                "event": game.headers["Event"],
+                "eco": game.headers["ECO"],
+                "opening": game.headers["Opening"],
+                "time_control": base,
                 "ply": ply,
                 "is_white": is_white,
                 "my_clock": clocks[player],
@@ -80,6 +83,8 @@ def snapshots(game):
                 "opp_rating": int(game.headers["BlackElo" if is_white else "WhiteElo"]),
                 "my_material": material(board, player),
                 "opp_material": material(board, opponent),
+                "my_berserk": berserk[player],
+                "opp_berserk": berserk[opponent],
                 "flagged": int(player == flagged_player),
             })
 
