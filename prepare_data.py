@@ -1,4 +1,5 @@
 import io
+from collections import deque
 import requests
 import zstandard
 import chess
@@ -11,9 +12,19 @@ TIME_CONTROL_FILTER = [(180, 0), (300, 0), (600, 0)]
 TERMINATION_FILTER = ["Normal", "Time forfeit"]
 THRESHOLDS = [60, 40, 20, 10] # seconds: one snapshot per player the first time their clock drops below each
 PIECE_VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
+RECENT_MOVES = 5 # number of a player's last moves used for their average move time
 
 def material(board, color):
     return sum(len(board.pieces(piece, color)) * value for piece, value in PIECE_VALUES.items())
+
+def avg(values):
+    return sum(values) / len(values) if values else None
+
+def n_pieces(board):
+    """Knights, bishops, rooks and queens left on the board, both colors."""
+    return sum(len(board.pieces(piece, color))
+               for piece in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+               for color in (chess.WHITE, chess.BLACK))
 
 def stream_games(n_games):
     with requests.get(URL, stream=True) as response:
@@ -51,15 +62,19 @@ def snapshots(game):
     clocks = {chess.WHITE: base, chess.BLACK: base}
     crossed = {chess.WHITE: set(), chess.BLACK: set()} # thresholds already recorded per player
     berserk = {chess.WHITE: False, chess.BLACK: False} # berserk (arena only) halves the starting clock
+    move_times = {chess.WHITE: deque(maxlen=RECENT_MOVES), chess.BLACK: deque(maxlen=RECENT_MOVES)}
     for ply, node in enumerate(game.mainline(), start=1):
         player = board.turn # who is making this move
-        board.push(node.move)
         clock = node.clock() # mover's time left after this move
         if clock is None:
             return []
-        clocks[player] = clock
+
+        board.push(node.move)
         if ply <= 2: # each player's first move shows their starting clock
             berserk[player] = clock < base * 0.75
+        else: # no increment, so the time spent is just the clock difference (+15 s gifts can make it negative)
+            move_times[player].append(max(0.0, clocks[player] - clock))
+        clocks[player] = clock
 
         for threshold in THRESHOLDS:
             if clock >= threshold or threshold in crossed[player]:
@@ -85,6 +100,10 @@ def snapshots(game):
                 "opp_material": material(board, opponent),
                 "my_berserk": berserk[player],
                 "opp_berserk": berserk[opponent],
+                "my_avg_move_time": avg(move_times[player]),
+                "opp_avg_move_time": avg(move_times[opponent]),
+                "n_pieces": n_pieces(board),
+                "queens_on": bool(board.pieces(chess.QUEEN, chess.WHITE) or board.pieces(chess.QUEEN, chess.BLACK)),
                 "flagged": int(player == flagged_player),
             })
 
